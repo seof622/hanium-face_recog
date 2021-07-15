@@ -1,11 +1,20 @@
-
 import face_recognition
 import cv2
 import camera
 import os
 import numpy as np
+import paho.mqtt.client as mqtt
+import json
+import io
+from PIL import Image,ImageFile
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+###########v.1
 
 class FaceRecog():
+    Flag = "No Detect"
+    capture_Flag = False;
     def __init__(self):
         # Using OpenCV to capture from device 0. If you have trouble capturing
         # from a webcam, comment the line below out and use a video file
@@ -33,8 +42,21 @@ class FaceRecog():
         self.face_names = []
         self.process_this_frame = True
 
+
     ###def __del__(self):
        ## del self.camera
+
+    def on_connect(self,client, userdata, flags, rc):
+        if rc == 0:
+            print("connected OK")
+        else:
+            print("Bad connection Returned code=", rc)
+
+    def on_disconnect(self,client, userdata, flags, rc=0):
+        print(str(rc))
+
+    def on_publish(self,client, userdata, mid):
+        print("In on_pub callback mid= ", mid)
 
     def get_frame(self):
         # Grab a single frame of video
@@ -63,8 +85,12 @@ class FaceRecog():
                 if min_value < 0.35:
                     index = np.argmin(distances)
                     name = self.known_face_names[index]
+                    self.Flag = "User Detect"
+                    if name == "dangerous":
+                        self.Flag = "Dangerous"
                 else:
                     name = 'unknown'
+                    self.Flag = "Not user"
 
                 self.face_names.append(name)
 
@@ -90,25 +116,59 @@ class FaceRecog():
 
     def get_jpg_bytes(self):
         frame = self.get_frame()
-        # We are using Motion JPEG, but OpenCV defaults to capture raw images,
-        # so we must encode it into JPEG in order to correctly display the
-        # video stream.
         ret, jpg = cv2.imencode('.jpg', frame)
         return jpg.tobytes()
+
+    def check_face(self):
+        if self.Flag == "User Detect":
+            client.publish('common', json.dumps({"Result":"Detect!"}), 1)
+            self.Flag = ""
+            if self.capture_Flag == False:
+                cv2.imwrite('self camera test.jpg', frame)
+
+                img = Image.open('self camera test.jpg')
+                bytearr = io.BytesIO()
+                img.save(bytearr, format('jpeg'))
+                client.publish('picture', bytearr.getvalue())
+                self.capture_Flag = True
+
+        elif self.Flag == "Not user":
+            client.publish('common', json.dumps({"Result":"Not User!"}), 0)
+            self.Flag = ""
+        elif self.Flag == "Dangerous":
+            client.publish('common', json.dumps({"Result": "Danger User!"}), 0)
+            self.Flag = ""
+
+        else:
+            client.publish('common', json.dumps({"Result":"Not Detect"}),0)
+
 
 
 if __name__ == '__main__':
     face_recog = FaceRecog()
     print(face_recog.known_face_names)
+    url = "54.185.18.26"
+    client = mqtt.Client()
+    client.on_connect = face_recog.on_connect
+    client.on_disconnect = face_recog.on_disconnect
+    client.on_publish = face_recog.on_publish
+    client.connect(url, 1883)
+    client.connect_async(url, 1883)
+    client.loop_start()
+
     while True:
         frame = face_recog.get_frame()
 
         # show the frame
         cv2.imshow("Frame", frame)
+        face_recog.check_face()
         key = cv2.waitKey(1) & 0xFF
+
 
         # if the `q` key was pressed, break from the loop
         if key == ord("q"):
+            face_recog.client.loop_stop()
+            face_recog.client.disconnect()
             break
 
     # do a bit of cleanup

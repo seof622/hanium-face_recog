@@ -1,70 +1,25 @@
-import dlib
-import cv2
-import numpy as np
+import paho.mqtt.client as mqtt
 
-# create list for landmarks
-ALL = list(range(0, 68))
-RIGHT_EYEBROW = list(range(17, 20))
-LEFT_EYEBROW = list(range(20, 23))
-RIGHT_EYE = list(range(32, 40))
-LEFT_EYE = list(range(40, 48))
-NOSE = list(range(23, 32))
-MOUTH_OUTLINE = list(range(48, 61))
-MOUTH_INNER = list(range(61, 68))
-JAWLINE = list(range(0, 17))
+# The callback for when the client receives a CONNACK response from the server.
+def on_connect(client, userdata, flags, rc):
+    print("Connected with result code "+str(rc))
 
+    # Subscribing in on_connect() means that if we lose the connection and
+    # reconnect then subscriptions will be renewed.
+    client.subscribe("/seoul/yuokok") # Topic /seoul/yuokok을 구독한다.
 
-detector = dlib.get_frontal_face_detector()
-predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
+# The callback for when a PUBLISH message is received from the server.
+def on_message(client, userdata, msg):
+    print(msg.topic+" "+str(msg.payload))
 
-count = 0
+client = mqtt.Client()
+client.on_connect = on_connect
+client.on_message = on_message
 
-vid_in = cv2.VideoCapture(0,cv2.CAP_DSHOW)
+client.connect("localhost") # - 서버 IP '테스트를 위해 test.mosquitto.org'로 지정
 
-face_id = input('\n enter user Name end press <return> ==>  ')
-print("\n [INFO] Initializing face capture. Look the camera and wait ...")
-
-while True:
-    # Get frame from video
-    # get success : ret = True / fail : ret= False
-    ret, image_o = vid_in.read()
-
-   # resize the video
-    image = cv2.resize(image_o, dsize=(640, 480), interpolation=cv2.INTER_AREA)
-    img_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    face_detector = detector(img_gray, 1)
-
-    print("The number of faces detected : {}".format(len(face_detector)))
-
-    for face in face_detector:
-        count += 1
-        # face wrapped with rectangle
-        cv2.rectangle(image, (face.left(), face.top()), (face.right(), face.bottom()),
-                      (0, 0, 255), 3)
-        cv2.imwrite("Gathering_Data/User." + str(face_id) + '.' + str(count) + ".jpg",
-                    img_gray[face.top():face.bottom(), face.left():face.right()])
-
-        # make prediction and transform to numpy array
-        landmarks = predictor(image, face)  # 얼굴에서 68개 점 찾기
-
-        #create list to contain landmarks
-        landmark_list = []
-
-        # append (x, y) in landmark_list
-        for p in landmarks.parts():
-            landmark_list.append([p.x, p.y])
-            cv2.circle(image, (p.x, p.y), 2, (0, 255, 0), -1)
-
-
-    cv2.imshow('result', image)
-
-    # wait for keyboard input
-    key = cv2.waitKey(1)
-
-    # if esc,
-    if key == 27:
-        break
-    elif count >= 1:  # Take 30 face sample and stop video
-        break
-vid_in.release()
+# Blocking call that processes network traffic, dispatches callbacks and
+# handles reconnecting.
+# Other loop*() functions are available that give a threaded interface and a
+# manual interface.
+client.loop_forever()

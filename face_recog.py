@@ -10,11 +10,9 @@ from PIL import Image,ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-<<<<<<< HEAD
-###########v.1
-=======
 
->>>>>>> master
+###########v.1
+
 
 class FaceRecog():
     Flag = "No Detect"

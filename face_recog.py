@@ -7,6 +7,8 @@ import paho.mqtt.client as mqtt
 import json
 import io
 from PIL import Image,ImageFile
+import threading
+import sys
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -14,9 +16,11 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 ###########v.1
 
 
+
 class FaceRecog():
     Flag = "No Detect"
-    capture_Flag = False;
+    capture_Flag = False
+    SLW = False
     def __init__(self):
         # Using OpenCV to capture from device 0. If you have trouble capturing
         # from a webcam, comment the line below out and use a video file
@@ -27,7 +31,7 @@ class FaceRecog():
         self.known_face_names = []
 
         # Load sample pictures and learn how to recognize it.
-        dirname = 'knowns'
+        dirname = './knowns'
         files = os.listdir(dirname)
         for filename in files:
             name, ext = os.path.splitext(filename)
@@ -48,7 +52,11 @@ class FaceRecog():
     ###def __del__(self):
        ## del self.camera
 
+
     def on_connect(self,client, userdata, flags, rc):
+        client.subscribe("set_user")
+        # client.subscribe("pic_response")
+        client.subscribe("TO_MCU")
         if rc == 0:
             print("connected OK")
         else:
@@ -57,8 +65,22 @@ class FaceRecog():
     def on_disconnect(self,client, userdata, flags, rc=0):
         print(str(rc))
 
+    def on_message_set_user(self, client, userdata, msg):
+        print("msg set_user arrived")
+        image = Image.open(io.BytesIO(msg.payload))
+        image.save('./knowns/User.jpg','jpeg')
+        self.__init__()
+
+    def on_message_TO_MCU(self, client, userdata, msg):
+        lock_way = msg.payload.decode()
+        print(lock_way)
+
+
     def on_publish(self,client, userdata, mid):
-        print("In on_pub callback mid= ", mid)
+        mola = 1
+
+    def on_subscribe(self, client, userdata, mid, granted_qos):
+        print("subscribed: " + str(mid) + " " + str(granted_qos))
 
     def get_frame(self):
         # Grab a single frame of video
@@ -84,7 +106,7 @@ class FaceRecog():
 
                 # tolerance: How much distance between faces to consider it a match. Lower is more strict.
                 # 0.6 is typical best performance.
-                if min_value < 0.35:
+                if min_value < 0.5:
                     index = np.argmin(distances)
                     name = self.known_face_names[index]
                     self.Flag = "User Detect"
@@ -126,13 +148,14 @@ class FaceRecog():
             client.publish('common', json.dumps({"Result":"Detect!"}), 1)
             self.Flag = ""
             if self.capture_Flag == False:
-                cv2.imwrite('self camera test.jpg', frame)
+                cv2.imwrite('TO_app/pic_danger.jpg', frame)
 
-                img = Image.open('self camera test.jpg')
+                img = Image.open('TO_app/pic_danger.jpg')
                 bytearr = io.BytesIO()
                 img.save(bytearr, format('jpeg'))
                 client.publish('picture', bytearr.getvalue())
                 self.capture_Flag = True
+
 
         elif self.Flag == "Not user":
             client.publish('common', json.dumps({"Result":"Not User!"}), 0)
@@ -145,6 +168,10 @@ class FaceRecog():
             client.publish('common', json.dumps({"Result":"Not Detect"}),0)
 
 
+    def work(self):
+        print("Timer on")
+        self.capture_Flag = False
+
 
 if __name__ == '__main__':
     face_recog = FaceRecog()
@@ -154,16 +181,22 @@ if __name__ == '__main__':
     client.on_connect = face_recog.on_connect
     client.on_disconnect = face_recog.on_disconnect
     client.on_publish = face_recog.on_publish
+    client.on_subscribe = face_recog.on_subscribe
+    # client.on_message = face_recog.on_message
+    # client.message_callback_add("pic_response", face_recog.on_message_pic_response)
+    client.message_callback_add("set_user", face_recog.on_message_set_user)
+    client.message_callback_add("TO_MCU", face_recog.on_message_TO_MCU)
     client.connect(url, 1883)
     client.connect_async(url, 1883)
     client.loop_start()
-
+    timer = threading.Timer(10, face_recog.work)
+    timer.start()
     while True:
         frame = face_recog.get_frame()
-
         # show the frame
         cv2.imshow("Frame", frame)
         face_recog.check_face()
+
         key = cv2.waitKey(1) & 0xFF
 
 
@@ -171,8 +204,10 @@ if __name__ == '__main__':
         if key == ord("q"):
             face_recog.client.loop_stop()
             face_recog.client.disconnect()
+            timer.cancel()
             break
 
     # do a bit of cleanup
     cv2.destroyAllWindows()
     print('finish')
+

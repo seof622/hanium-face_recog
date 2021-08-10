@@ -6,9 +6,11 @@ import numpy as np
 import paho.mqtt.client as mqtt
 import json
 import io
-from PIL import Image,ImageFile
+from PIL import Image, ImageFile
 import threading
 import sys
+import serial
+import signal
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -16,11 +18,19 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 ###########v.1
 
 
-
 class FaceRecog():
-    Flag = "No Detect"
+    ser = serial.Serial("/dev/ttyS0", 9600, timeout=0)
+    receive_flag = False
+    User_Flag = False
+    Danger_Flag = False
+    Not_Detect_Flag = True
     capture_Flag = False
     SLW = False
+    request_Flag = False
+    recycle_uart = True
+    flag_danger_often = False
+    time_request = 0;
+
     def __init__(self):
         # Using OpenCV to capture from device 0. If you have trouble capturing
         # from a webcam, comment the line below out and use a video file
@@ -48,12 +58,10 @@ class FaceRecog():
         self.face_names = []
         self.process_this_frame = True
 
-
     ###def __del__(self):
-       ## del self.camera
+    ## del self.camera
 
-
-    def on_connect(self,client, userdata, flags, rc):
+    def on_connect(self, client, userdata, flags, rc):
         client.subscribe("set_user")
         # client.subscribe("pic_response")
         client.subscribe("TO_MCU")
@@ -62,21 +70,23 @@ class FaceRecog():
         else:
             print("Bad connection Returned code=", rc)
 
-    def on_disconnect(self,client, userdata, flags, rc=0):
+    def on_disconnect(self, client, userdata, flags, rc=0):
         print(str(rc))
 
     def on_message_set_user(self, client, userdata, msg):
         print("msg set_user arrived")
         image = Image.open(io.BytesIO(msg.payload))
-        image.save('./knowns/User.jpg','jpeg')
+        image.save('./knowns/User.jpg', 'jpeg')
         self.__init__()
 
     def on_message_TO_MCU(self, client, userdata, msg):
-        lock_way = msg.payload.decode()
-        print(lock_way)
+        TO_MCU = msg.payload.decode()
+        receive_app = ""
+        if TO_MCU != "":
+            self.ser.write(msg.payload)
+        print(TO_MCU)
 
-
-    def on_publish(self,client, userdata, mid):
+    def on_publish(self, client, userdata, mid):
         mola = 1
 
     def on_subscribe(self, client, userdata, mid, granted_qos):
@@ -106,15 +116,17 @@ class FaceRecog():
 
                 # tolerance: How much distance between faces to consider it a match. Lower is more strict.
                 # 0.6 is typical best performance.
-                if min_value < 0.5:
+                if min_value < 0.6:
                     index = np.argmin(distances)
                     name = self.known_face_names[index]
-                    self.Flag = "User Detect"
+                    self.User_Flag = True
+                    self.Not_Detect_Flag = False
                     if name == "dangerous":
-                        self.Flag = "Dangerous"
+                        self.Danger_Flag = True
+                        self.Not_Detect_Flag = False
                 else:
                     name = 'unknown'
-                    self.Flag = "Not user"
+                    self.Not_Detect_Falg = True
 
                 self.face_names.append(name)
 
@@ -144,33 +156,61 @@ class FaceRecog():
         return jpg.tobytes()
 
     def check_face(self):
-        if self.Flag == "User Detect":
-            client.publish('common', json.dumps({"Result":"Detect!"}), 1)
-            self.Flag = ""
+        if self.User_Flag:
+            client.publish('common', json.dumps({"Result": "Detect!"}), 1)
+            if self.request_Flag:
+                self.flag_danger_often = False
             if self.capture_Flag == False:
-                cv2.imwrite('TO_app/pic_danger.jpg', frame)
-
-                img = Image.open('TO_app/pic_danger.jpg')
-                bytearr = io.BytesIO()
-                img.save(bytearr, format('jpeg'))
-                client.publish('picture', bytearr.getvalue())
-                self.capture_Flag = True
+                self.capture(frame)
 
 
-        elif self.Flag == "Not user":
-            client.publish('common', json.dumps({"Result":"Not User!"}), 0)
-            self.Flag = ""
-        elif self.Flag == "Dangerous":
+
+        elif self.Not_Detect_Flag:
+            client.publish('common', json.dumps({"Result": "Not User!"}), 0)
+            # self.Flag = ""
+        elif self.Danger_Flag:
             client.publish('common', json.dumps({"Result": "Danger User!"}), 0)
-            self.Flag = ""
-
-        else:
-            client.publish('common', json.dumps({"Result":"Not Detect"}),0)
-
+            # self.Flag = ""
 
     def work(self):
         print("Timer on")
         self.capture_Flag = False
+        self.recycle_uart = True
+        if self.User_Flag:
+            self.ser.write(b'GFSdanger\n')
+        self.User_Flag = False
+        self.Danger_Flag = False
+        self.Not_detect_Flag = True
+        self.time_request = self.time_request + 1
+        threading.Timer(10, self.work).start()
+
+    def check_uart_data(self, data):
+        request_detect = ""
+        if data == "RFL1\n":
+            print("request_FLag")
+            if self.User_Flag:
+                request_detect = "SFSUser\n"
+                self.ser.write(request_detect.encode())
+                self.request_Flag = False
+                print("here1")
+            else:
+                if self.time_request == 2:
+                    self.time_request = 0
+                    self.request_Flag = False
+        elif data == "FAS1\n":
+            client.publish('TO_APP', data)
+            cap_access = self.camera.get_frame()
+            self.capture(cap_access)
+        else:
+            client.publish('TO_APP', data.encode(), 0)
+
+    def capture(self, frame_type):
+        cv2.imwrite('TO_app/save.jpg', frame_type)
+        img = Image.open('TO_app/save.jpg')
+        bytearr = io.BytesIO()
+        img.save(bytearr, format('jpeg'))
+        client.publish('picture', bytearr.getvalue())
+        self.capture_Flag = True
 
 
 if __name__ == '__main__':
@@ -189,22 +229,43 @@ if __name__ == '__main__':
     client.connect(url, 1883)
     client.connect_async(url, 1883)
     client.loop_start()
-    timer = threading.Timer(10, face_recog.work)
-    timer.start()
+    face_recog.work()
+    # uart_th = threading.Thread(face_recog.uart_func())
+    # recog_th = threading.Thread(face_recog.frame_th())
+    # uart_th.start()
+    receive_data_full = ""
     while True:
+
+        # recog_th.start()
         frame = face_recog.get_frame()
         # show the frame
         cv2.imshow("Frame", frame)
-        face_recog.check_face()
-
         key = cv2.waitKey(1) & 0xFF
 
+        #          if face_recog.recycle_uart == True:
+        #          while face_recog.ser.readable():
+        receive_data = face_recog.ser.read()
+        receive_data_full += receive_data.decode()
+        if receive_data == b'\n':
+            print(receive_data_full)
+            face_recog.check_uart_data(receive_data_full)
+            if receive_data_full == "RFL1\n":
+                face_recog.request_Flag = True
+            receive_data_full = ""
+        #             if receive_data_full == receive_data_full:
+        #                 face_recog.recycle_uart = False
+        #             elif receive_data_full != receive_data_full:
+        #                 face_recog.recycle_uart = True
+        #                 break
+        face_recog.check_face()
+        if face_recog.request_Flag:
+            face_recog.check_uart_data("RFL1\n")
 
         # if the `q` key was pressed, break from the loop
         if key == ord("q"):
             face_recog.client.loop_stop()
             face_recog.client.disconnect()
-            timer.cancel()
+
             break
 
     # do a bit of cleanup

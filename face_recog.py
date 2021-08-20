@@ -19,7 +19,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class FaceRecog():
-    ser = serial.Serial("/dev/ttyS0", 9600, timeout=0)
+    #ser = serial.Serial("/dev/ttyS0", 9600, timeout=0)
     receive_flag = False
     User_Flag = False
     Danger_Flag = False
@@ -29,7 +29,8 @@ class FaceRecog():
     request_Flag = False
     recycle_uart = True
     flag_danger_often = False
-    time_request = 0;
+    time_request = 0
+    TO_APP = True
 
     def __init__(self):
         # Using OpenCV to capture from device 0. If you have trouble capturing
@@ -39,18 +40,31 @@ class FaceRecog():
 
         self.known_face_encodings = []
         self.known_face_names = []
+        self.danger_face_encodings = []
+        self.danger_face_names = []
 
         # Load sample pictures and learn how to recognize it.
-        dirname = './knowns'
+        dirname = './set_user'
         files = os.listdir(dirname)
         for filename in files:
             name, ext = os.path.splitext(filename)
-            if ext == '.jpg':
+            if ext == '.png':
                 self.known_face_names.append(name)
                 pathname = os.path.join(dirname, filename)
                 img = face_recognition.load_image_file(pathname)
                 face_encoding = face_recognition.face_encodings(img)[0]
                 self.known_face_encodings.append(face_encoding)
+
+        dirname_danger = './set_danger'
+        files_danger = os.listdir(dirname_danger)
+        for filename in files_danger:
+            name, ext = os.path.splitext(filename)
+            if ext == '.jpg':
+                self.danger_face_names.append(name)
+                pathname = os.path.join(dirname_danger, filename)
+                img = face_recognition.load_image_file(pathname)
+                face_encoding = face_recognition.face_encodings(img)[0]
+                self.danger_face_encodings.append(face_encoding)
 
         # Initialize some variables
         self.face_locations = []
@@ -65,6 +79,8 @@ class FaceRecog():
         client.subscribe("set_user")
         # client.subscribe("pic_response")
         client.subscribe("TO_MCU")
+        client.subscribe("set_face_user")
+        client.subscribe("set_face_danger")
         if rc == 0:
             print("connected OK")
         else:
@@ -73,18 +89,59 @@ class FaceRecog():
     def on_disconnect(self, client, userdata, flags, rc=0):
         print(str(rc))
 
+
     def on_message_set_user(self, client, userdata, msg):
         print("msg set_user arrived")
         image = Image.open(io.BytesIO(msg.payload))
-        image.save('./knowns/User.jpg', 'jpeg')
-        self.__init__()
+        image.save('./set_user/User.png', 'jpeg')
+
+        dirname_user = './set_user'
+        files = os.listdir(dirname_user)
+        for filename in files:
+            name, ext = os.path.splitext(filename)
+            if ext == '.jpg':
+                self.known_face_names.append(name)
+                pathname = os.path.join(dirname_user, filename)
+                img = face_recognition.load_image_file(pathname)
+                face_encoding = face_recognition.face_encodings(img)[0]
+                self.known_face_encodings.append(face_encoding)
+
+        # self.__init__()
+
+    def on_message_set_danger(self, client, userdata, msg):
+        print("msg set_danger arrived")
+        image = Image.open(io.BytesIO(msg.payload))
+        IMG_SEQ = 0
+        image_str ="./set_danger/Danger" +  str(IMG_SEQ) + ".jpg"
+        image.save(image_str, 'jpeg')
+        IMG_SEQ = IMG_SEQ + 1
+        # self.__init__()
+        dirname_danger = './set_danger'
+        files_danger = os.listdir(dirname_danger)
+        for filename in files_danger:
+            name, ext = os.path.splitext(filename)
+            if ext == '.jpg':
+                self.danger_face_names.append(name)
+                pathname = os.path.join(dirname_danger, filename)
+                img = face_recognition.load_image_file(pathname)
+                face_encoding = face_recognition.face_encodings(img)[0]
+                self.danger_face_encodings.append(face_encoding)
+
 
     def on_message_TO_MCU(self, client, userdata, msg):
         TO_MCU = msg.payload.decode()
         receive_app = ""
-        if TO_MCU != "":
-            self.ser.write(msg.payload)
+        # if TO_MCU != "":
+        #     self.ser.write(msg.payload)
         print(TO_MCU)
+
+    def on_message_pic_response(self, client, userdata, msg):
+        response = msg.payload.decode()
+        if response == "OK":
+            print(response)
+            self.TO_APP = False
+
+
 
     def on_publish(self, client, userdata, mid):
         mola = 1
@@ -109,24 +166,30 @@ class FaceRecog():
             self.face_encodings = face_recognition.face_encodings(rgb_small_frame, self.face_locations)
 
             self.face_names = []
+
             for face_encoding in self.face_encodings:
                 # See if the face is a match for the known face(s)
-                distances = face_recognition.face_distance(self.known_face_encodings, face_encoding)
-                min_value = min(distances)
+                distances_knowns = face_recognition.face_distance(self.known_face_encodings, face_encoding)
+                min_value_knowns = min(distances_knowns)
 
+                distances_danger = face_recognition.face_distance(self.danger_face_encodings, face_encoding)
+                min_value_danger = min(distances_danger)
                 # tolerance: How much distance between faces to consider it a match. Lower is more strict.
                 # 0.6 is typical best performance.
-                if min_value < 0.6:
-                    index = np.argmin(distances)
+                if min_value_knowns < 0.4:
+                    index = np.argmin(distances_knowns)
                     name = self.known_face_names[index]
                     self.User_Flag = True
                     self.Not_Detect_Flag = False
-                    if name == "dangerous":
-                        self.Danger_Flag = True
-                        self.Not_Detect_Flag = False
+                elif min_value_danger < 0.4:
+                    index = np.argmin(distances_danger)
+                    name = self.danger_face_names[index]
+                    self.Danger_Flag = True
+                    self.Not_Detect_Flag = False
                 else:
                     name = 'unknown'
                     self.Not_Detect_Falg = True
+
 
                 self.face_names.append(name)
 
@@ -158,26 +221,27 @@ class FaceRecog():
     def check_face(self):
         if self.User_Flag:
             client.publish('common', json.dumps({"Result": "Detect!"}), 1)
-            if self.request_Flag:
-                self.flag_danger_often = False
-            if self.capture_Flag == False:
-                self.capture(frame)
-
-
 
         elif self.Not_Detect_Flag:
             client.publish('common', json.dumps({"Result": "Not User!"}), 0)
             # self.Flag = ""
         elif self.Danger_Flag:
             client.publish('common', json.dumps({"Result": "Danger User!"}), 0)
+            if self.request_Flag:
+                self.flag_danger_often = False
+            if self.capture_Flag == False:
+                self.capture(frame)
+                client.publish("TO_APP", "Danger\n");
+
             # self.Flag = ""
 
     def work(self):
         print("Timer on")
         self.capture_Flag = False
         self.recycle_uart = True
-        if self.User_Flag:
-            self.ser.write(b'GFSdanger\n')
+        # if self.User_Flag:
+        #      self.ser.write(b'GFSdanger\n')
+        #
         self.User_Flag = False
         self.Danger_Flag = False
         self.Not_detect_Flag = True
@@ -198,9 +262,9 @@ class FaceRecog():
                     self.time_request = 0
                     self.request_Flag = False
         elif data == "FAS1\n":
-            client.publish('TO_APP', data)
             cap_access = self.camera.get_frame()
             self.capture(cap_access)
+            client.publish('TO_APP', data)
         else:
             client.publish('TO_APP', data.encode(), 0)
 
@@ -223,8 +287,9 @@ if __name__ == '__main__':
     client.on_publish = face_recog.on_publish
     client.on_subscribe = face_recog.on_subscribe
     # client.on_message = face_recog.on_message
-    # client.message_callback_add("pic_response", face_recog.on_message_pic_response)
-    client.message_callback_add("set_user", face_recog.on_message_set_user)
+    client.message_callback_add("pic_response", face_recog.on_message_pic_response)
+    client.message_callback_add("set_face_user", face_recog.on_message_set_user)
+    client.message_callback_add("set_face_danger", face_recog.on_message_set_danger)
     client.message_callback_add("TO_MCU", face_recog.on_message_TO_MCU)
     client.connect(url, 1883)
     client.connect_async(url, 1883)
@@ -237,21 +302,24 @@ if __name__ == '__main__':
     while True:
 
         # recog_th.start()
+        # try:
         frame = face_recog.get_frame()
+        # except:
+        #     print("사용자의 사진을 known에 저장")
         # show the frame
         cv2.imshow("Frame", frame)
         key = cv2.waitKey(1) & 0xFF
 
         #          if face_recog.recycle_uart == True:
         #          while face_recog.ser.readable():
-        receive_data = face_recog.ser.read()
-        receive_data_full += receive_data.decode()
-        if receive_data == b'\n':
-            print(receive_data_full)
-            face_recog.check_uart_data(receive_data_full)
-            if receive_data_full == "RFL1\n":
-                face_recog.request_Flag = True
-            receive_data_full = ""
+        # receive_data = face_recog.ser.read()
+        # receive_data_full += receive_data.decode()
+        # if receive_data == b'\n':
+        #     print(receive_data_full)
+        #     face_recog.check_uart_data(receive_data_full)
+        #     if receive_data_full == "RFL1\n":
+        #         face_recog.request_Flag = True
+        #     receive_data_full = ""
         #             if receive_data_full == receive_data_full:
         #                 face_recog.recycle_uart = False
         #             elif receive_data_full != receive_data_full:
@@ -261,7 +329,7 @@ if __name__ == '__main__':
         if face_recog.request_Flag:
             face_recog.check_uart_data("RFL1\n")
 
-        # if the `q` key was pressed, break from the loop
+        # if the `q` key was pressed, break from  the loop
         if key == ord("q"):
             face_recog.client.loop_stop()
             face_recog.client.disconnect()

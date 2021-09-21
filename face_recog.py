@@ -8,10 +8,7 @@ import json
 import io
 from PIL import Image, ImageFile
 import threading
-import sys
-import serial
-import signal
-
+import subprocess
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
@@ -31,11 +28,15 @@ class FaceRecog():
     flag_danger_often = False
     time_request = 0
     TO_APP = True
+    idx = 0
+    IMG_SEQ = 0
 
     def __init__(self):
         # Using OpenCV to capture from device 0. If you have trouble capturing
         # from a webcam, comment the line below out and use a video file
         # instead.
+
+
         self.camera = camera.VideoCamera()
 
         self.known_face_encodings = []
@@ -43,28 +44,45 @@ class FaceRecog():
         self.danger_face_encodings = []
         self.danger_face_names = []
 
+        self.path_encoding_dir = "./encoding_list"
+        self.path_Picture_dir = "./encoding_image"
+        self.idx_encoding = len(os.listdir(self.path_encoding_dir))
         # Load sample pictures and learn how to recognize it.
-        dirname = './set_user'
+        """
+        dirname = './set_user/Picture'
         files = os.listdir(dirname)
         for filename in files:
             name, ext = os.path.splitext(filename)
-            if ext == '.png':
+            if ext == '.jpg':
                 self.known_face_names.append(name)
                 pathname = os.path.join(dirname, filename)
                 img = face_recognition.load_image_file(pathname)
                 face_encoding = face_recognition.face_encodings(img)[0]
                 self.known_face_encodings.append(face_encoding)
+        """
 
-        dirname_danger = './set_danger'
-        files_danger = os.listdir(dirname_danger)
-        for filename in files_danger:
-            name, ext = os.path.splitext(filename)
-            if ext == '.jpg':
-                self.danger_face_names.append(name)
-                pathname = os.path.join(dirname_danger, filename)
-                img = face_recognition.load_image_file(pathname)
-                face_encoding = face_recognition.face_encodings(img)[0]
-                self.danger_face_encodings.append(face_encoding)
+        if self.idx_encoding != 0:
+            files_danger = os.listdir(self.path_encoding_dir)
+            for filename in files_danger:
+                name, ext = os.path.splitext(filename)
+                if ext == '.csv':
+                    self.danger_face_names.append(name)
+                    pathname = os.path.join(self.path_encoding_dir, filename)
+                    #img = face_recognition.load_image_file(pathname)
+                    #face_encoding = face_recognition.face_encodings(img)[0]
+                    face_encoding = np.loadtxt(pathname, delimiter=",")
+                    self.danger_face_encodings.append(face_encoding)
+        else:
+            print("Don't Exist Encoding File")
+        #         print(face_encoding)
+        #
+        # file_idx = 0
+        # np.savetxt("./encoding_list/face" + str(file_idx) + ".csv", face_encoding,delimiter=',')
+        # read_data = np.loadtxt("./encoding_list/face0.csv",delimiter=',',dtype=np.float32)
+        # print(read_data)
+
+
+
 
         # Initialize some variables
         self.face_locations = []
@@ -76,25 +94,46 @@ class FaceRecog():
     ## del self.camera
 
     def on_connect(self, client, userdata, flags, rc):
-        client.subscribe("set_user")
+        #client.subscribe("set_user")
         # client.subscribe("pic_response")
         client.subscribe("TO_MCU")
+        client.subscribe("set_person")
+        """
         client.subscribe("set_face_user")
         client.subscribe("set_face_danger")
+        """
+
         if rc == 0:
             print("connected OK")
         else:
             print("Bad connection Returned code=", rc)
 
     def on_disconnect(self, client, userdata, flags, rc=0):
+        print("disconnect: ")
         print(str(rc))
 
+    def cal_encoding(self,client, userdata, msg):
+        ###받은 데이터를 JSON형태로 변환
+        recv_json_data = msg.payload.decode('utf-8')
+        print(recv_json_data)
 
+        Json_Data = json.load(recv_json_data)
+
+        ###Data라는 Key를 가진 값을 이미지로 변환 후 저장
+        Image_Data = Image.open(io.BytesIO(Json_Data["Data"]))
+        ###엔코딩 된 파일 개수 확인 --> 이것을 통해 다음 set될 encoding파일의 이름으로 지정
+        idx_encoding_dir = len(os.listdir(self.path_encoding_dir))
+        Image_Data.save(self.path_Picture_dir + "/" + Json_Data["Target"] + idx_encoding_dir,'jpeg')
+        subprocess.call('./test.py')
+
+
+    """
     def on_message_set_user(self, client, userdata, msg):
+
         print("msg set_user arrived")
         image = Image.open(io.BytesIO(msg.payload))
-        image.save('./set_user/User.png', 'jpeg')
-
+        image.save('./set_user/User' + str(self.idx) + '.jpg', 'jpeg')
+        self.idx = self.idx + 1
         dirname_user = './set_user'
         files = os.listdir(dirname_user)
         for filename in files:
@@ -108,13 +147,13 @@ class FaceRecog():
 
         # self.__init__()
 
+
     def on_message_set_danger(self, client, userdata, msg):
         print("msg set_danger arrived")
         image = Image.open(io.BytesIO(msg.payload))
-        IMG_SEQ = 0
-        image_str ="./set_danger/Danger" +  str(IMG_SEQ) + ".jpg"
+        image_str ="./set_danger/Danger" +  str(self.IMG_SEQ) + ".jpg"
         image.save(image_str, 'jpeg')
-        IMG_SEQ = IMG_SEQ + 1
+        self.IMG_SEQ = self.IMG_SEQ + 1
         # self.__init__()
         dirname_danger = './set_danger'
         files_danger = os.listdir(dirname_danger)
@@ -126,13 +165,10 @@ class FaceRecog():
                 img = face_recognition.load_image_file(pathname)
                 face_encoding = face_recognition.face_encodings(img)[0]
                 self.danger_face_encodings.append(face_encoding)
-
+    """
 
     def on_message_TO_MCU(self, client, userdata, msg):
         TO_MCU = msg.payload.decode()
-        receive_app = ""
-        # if TO_MCU != "":
-        #     self.ser.write(msg.payload)
         print(TO_MCU)
 
     def on_message_pic_response(self, client, userdata, msg):
@@ -153,6 +189,7 @@ class FaceRecog():
         # Grab a single frame of video
         frame = self.camera.get_frame()
 
+
         # Resize frame of video to 1/4 size for faster face recognition processing
         small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
 
@@ -169,49 +206,54 @@ class FaceRecog():
 
             for face_encoding in self.face_encodings:
                 # See if the face is a match for the known face(s)
-                distances_knowns = face_recognition.face_distance(self.known_face_encodings, face_encoding)
-                min_value_knowns = min(distances_knowns)
 
-                distances_danger = face_recognition.face_distance(self.danger_face_encodings, face_encoding)
-                min_value_danger = min(distances_danger)
+                try:
+                    distances_knowns = face_recognition.face_distance(self.known_face_encodings, face_encoding)
+                    min_value_knowns = min(distances_knowns)
+                    if min_value_knowns < 0.6:
+                        index = np.argmin(distances_knowns)
+                        known_name = self.known_face_names[index]
+                        self.User_Flag = True
+                        self.Not_Detect_Flag = False
+                        self.face_names.append(known_name)
+
+                except:
+                    pass
+
+                try:
+                    distances_danger = face_recognition.face_distance(self.danger_face_encodings, face_encoding)
+                    min_value_danger = min(distances_danger)
+                    if min_value_danger < 0.6:
+                        index = np.argmin(distances_danger)
+                        danger_name = self.danger_face_names[index]
+                        self.Danger_Flag = True
+                        self.Not_Detect_Flag = False
+                        self.face_names.append(danger_name)
+                except:
+                    pass
                 # tolerance: How much distance between faces to consider it a match. Lower is more strict.
                 # 0.6 is typical best performance.
-                if min_value_knowns < 0.4:
-                    index = np.argmin(distances_knowns)
-                    name = self.known_face_names[index]
-                    self.User_Flag = True
-                    self.Not_Detect_Flag = False
-                elif min_value_danger < 0.4:
-                    index = np.argmin(distances_danger)
-                    name = self.danger_face_names[index]
-                    self.Danger_Flag = True
-                    self.Not_Detect_Flag = False
-                else:
-                    name = 'unknown'
-                    self.Not_Detect_Falg = True
-
-
-                self.face_names.append(name)
-
         self.process_this_frame = not self.process_this_frame
 
-        # Display the results
         for (top, right, bottom, left), name in zip(self.face_locations, self.face_names):
-            # Scale back up face locations since the frame we detected in was scaled to 1/4 size
-            top *= 4
-            right *= 4
-            bottom *= 4
-            left *= 4
+                    # Scale back up face locations since the frame we detected in was scaled to 1/4 size
+                    top *= 4
+                    right *= 4
+                    bottom *= 4
+                    left *= 4
 
-            # Draw a box around the face
-            cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
+                    # Draw a box around the face
+                    cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
 
-            # Draw a label with a name below the face
-            cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 0, 255), cv2.FILLED)
-            font = cv2.FONT_HERSHEY_DUPLEX
-            cv2.putText(frame, name, (left + 6, bottom - 6), font, 1.0, (255, 255, 255), 1)
+                    # Draw a label with a name below the face
+                    cv2.rectangle(frame, (left, bottom - 35), (right, bottom), (0, 0, 255), cv2.FILLED)
+                    font = cv2.FONT_HERSHEY_DUPLEX
+                    cv2.putText(frame, name, (left + 6, bottom - 6), font, 1.0, (255, 255, 255), 1)
 
         return frame
+        # Display the results
+
+
 
     def get_jpg_bytes(self):
         frame = self.get_frame()
@@ -221,12 +263,13 @@ class FaceRecog():
     def check_face(self):
         if self.User_Flag:
             client.publish('common', json.dumps({"Result": "Detect!"}), 1)
+            # if self.TO_MCU == "Connect_Reqeust":
+            #     client.publish("TO_APP", "Connect_Response")
 
         elif self.Not_Detect_Flag:
             client.publish('common', json.dumps({"Result": "Not User!"}), 0)
             # self.Flag = ""
         elif self.Danger_Flag:
-            client.publish('common', json.dumps({"Result": "Danger User!"}), 0)
             if self.request_Flag:
                 self.flag_danger_often = False
             if self.capture_Flag == False:
@@ -274,22 +317,25 @@ class FaceRecog():
         bytearr = io.BytesIO()
         img.save(bytearr, format('jpeg'))
         client.publish('picture', bytearr.getvalue())
+        print("send pic data")
         self.capture_Flag = True
+
 
 
 if __name__ == '__main__':
     face_recog = FaceRecog()
     print(face_recog.known_face_names)
-    url = "54.185.18.26"
+    print(face_recog.danger_face_names)
+
+    url = "54.201.98.240"
     client = mqtt.Client()
     client.on_connect = face_recog.on_connect
     client.on_disconnect = face_recog.on_disconnect
     client.on_publish = face_recog.on_publish
     client.on_subscribe = face_recog.on_subscribe
     # client.on_message = face_recog.on_message
-    client.message_callback_add("pic_response", face_recog.on_message_pic_response)
-    client.message_callback_add("set_face_user", face_recog.on_message_set_user)
-    client.message_callback_add("set_face_danger", face_recog.on_message_set_danger)
+
+    client.message_callback_add("set_person", face_recog.cal_encoding)
     client.message_callback_add("TO_MCU", face_recog.on_message_TO_MCU)
     client.connect(url, 1883)
     client.connect_async(url, 1883)
@@ -302,13 +348,20 @@ if __name__ == '__main__':
     while True:
 
         # recog_th.start()
-        # try:
-        frame = face_recog.get_frame()
-        # except:
-        #     print("사용자의 사진을 known에 저장")
+        if face_recog.idx_encoding != 0:
+            frame = face_recog.get_frame()
+            cv2.imshow("Frame", frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                face_recog.client.loop_stop()
+                face_recog.client.disconnect()
+                break
+        else:
+            pass
+
         # show the frame
-        cv2.imshow("Frame", frame)
-        key = cv2.waitKey(1) & 0xFF
+
+
 
         #          if face_recog.recycle_uart == True:
         #          while face_recog.ser.readable():
@@ -330,11 +383,9 @@ if __name__ == '__main__':
             face_recog.check_uart_data("RFL1\n")
 
         # if the `q` key was pressed, break from  the loop
-        if key == ord("q"):
-            face_recog.client.loop_stop()
-            face_recog.client.disconnect()
 
-            break
+
+
 
     # do a bit of cleanup
     cv2.destroyAllWindows()

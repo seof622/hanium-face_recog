@@ -124,7 +124,7 @@ class FaceRecog():
         ###엔코딩 된 파일 개수 확인 --> 이것을 통해 다음 set될 encoding파일의 이름으로 지정
         idx_encoding_dir = len(os.listdir(self.path_encoding_dir))
         Image_Data.save(self.path_Picture_dir + "/" + Json_Data["Target"] + idx_encoding_dir,'jpeg')
-        subprocess.call('./test.py')
+        subprocess.call('./save_encoding.py')
 
 
     """

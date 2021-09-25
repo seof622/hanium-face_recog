@@ -6,6 +6,7 @@ from PIL import Image, ImageFile
 import io
 import paho.mqtt.client as mqtt
 
+
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import threading
@@ -57,12 +58,14 @@ class face_recog_pi():
         # Loop over each face found in the frame to see if it's someone we know.
         for face_encoding in face_encodings:
             # See if the face is a match for the known face(s)
-            match = face_recognition.compare_faces(self.known_face_encodings, face_encoding, tolerance=0.55)
+            match = face_recognition.compare_faces(self.known_face_encodings, face_encoding, tolerance=0.45)
             name = "<Unknown Person>"
-
-            if match[0]:
-                name = self.known_face_names[0]
-
+            try:
+                for idx in range(self.idx_encoding):
+                        if match[idx]:
+                                name = self.known_face_names[idx]
+            except:
+                print("Recognite error!")
             print("I see someone named {}!".format(name))
         camera.close()
 
@@ -99,16 +102,18 @@ class face_recog_pi():
                 name, ext = os.path.splitext(filename)
                 check_user = "User" not in name
                 if check_user != 1:
-                    print("User!")
+                    print("set User!")
                     if ext == '.jpg':
                         idx = name.split('User')[1]
                         print(idx)
                         if idx_User_Image <= int(idx):
                             idx_User_Image = int(idx)
-        User_Image_data.save(self.path_Picture_dir + "/User" + str(idx_User_Image + 1) + ".jpg", 'jpeg')
+        save_image_path = self.path_Picture_dir + "/User" + str(idx_User_Image + 1) + ".jpg"
+        User_Image_data.save(save_image_path, 'jpeg')
+        print("subprocess Start!")
         proc = os.system('python3 save_encoding.py')
         if proc == 0:
-            print("Subprocess start")
+            pass
         self.img_encoding()
 
     def danger_encoding(self, client, userdata, msg):
@@ -119,15 +124,19 @@ class face_recog_pi():
         if len(files) > 0:
             for filename in files:
                 name, ext = os.path.splitext(filename)
-                if name.find('Danger') > 0:
+                check_danger = "Danger" not in name
+                if check_danger != 1:
+                    print("set Dagner")
                     if ext == '.jpg':
-                        idx = name.split('Danger')
-                        if idx_Danger_Image <= idx:
-                            idx_Danger_Image = idx
+                        idx = name.split('Danger')[1]
+                        print(idx)
+                        if idx_Danger_Image <= int(idx):
+                            idx_Danger_Image = int(idx)
         Danger_Image_daga.save(self.path_Picture_dir + "/Danger" + str(idx_Danger_Image + 1) + ".jpg", 'jpeg')
         proc = os.system('python3 save_encoding.py')
+        print("subprocess Start")
         if proc == 0:
-            print("Subprocess complete")
+            pass
         self.img_encoding()
 
 

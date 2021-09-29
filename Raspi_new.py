@@ -5,7 +5,8 @@ import numpy as np
 from PIL import Image, ImageFile
 import io
 import paho.mqtt.client as mqtt
-
+import serial
+from time import sleep
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -13,6 +14,18 @@ import threading
 
 
 class face_recog_pi():
+    ser = serial.Serial("/dev/ttyS0", 9600, timeout=1)
+    receive_flag = False
+    User_Flag = False
+    Danger_Flag = False
+    Not_Detect_Flag = True
+    capture_Flag = False
+    SLW = False
+    request_Flag = False
+    recycle_uart = True
+    flag_danger_often = False
+    time_request = 0;
+
     def __init__(self):
         # Get a reference to the Raspberry Pi camera.
         # If this fails, make sure you have a camera connected to the RPi and that you
@@ -62,12 +75,55 @@ class face_recog_pi():
             name = "<Unknown Person>"
             try:
                 for idx in range(self.idx_encoding):
-                        if match[idx]:
-                                name = self.known_face_names[idx]
+                    if match[idx]:
+                        name = self.known_face_names[idx]
             except:
                 print("Recognite error!")
+            if "User" in name:
+                print("Appear User")
+                self.User_Flag = True
+                self.Danger_Flag = False
+                self.Not_Detect_Flag = False
+            elif "Danger" in name:
+                print("Appear Danger")
+                camera.capture('TO_app/Danger.jpg')
+                self.Danger_capture()
+                self.User_Flag = False
+                self.Danger_Flag = True
+                self.Not_Detect_Flag = False
+                if self.request_Flag:
+                    self.flag_danger_often = False
+                    # if self.capture_Flag == False:
+                    #    client.publish('TO_APP',"Danger\n",1)
+            else:
+                print("Appear Unknown")
+                self.User_Flag = False
+                self.Danger_Flag = False
+                self.Not_Detect_Flag = True
             print("I see someone named {}!".format(name))
         camera.close()
+
+    """
+    def check_face(self):
+        if self.User_Flag:
+            pass 
+        elif self.Not_Detect_Flag:
+            pass
+        elif self.Danger_Flag:
+            if self.request_Flag:
+                self.flag_danger_often = False
+            if self.capture_Flag == False:
+
+                client.publish('TO_APP',"Danger\n",1)
+    """
+
+    def Danger_capture(self):
+        img = Image.open('TO_app/Danger.jpg')
+        bytearr = io.BytesIO()
+        img.save(bytearr, format('jpeg'))
+        client.publish('picture', bytearr.getvalue())
+        client.publish('TO_APP', "Danger\n", 1)
+        self.capture_Flag = True
 
     def on_connect(self, client, userdata, flags, rc):
         client.subscribe("TO_MCU")
@@ -84,7 +140,65 @@ class face_recog_pi():
 
     def on_message_TO_MCU(self, client, userdata, msg):
         TO_MCU = msg.payload.decode()
-        print(TO_MCU)
+        receive_app = ""
+        if TO_MCU != "":
+            self.ser.write(msg.payload)
+            print(TO_MCU)
+
+    def check_uart_data(self, data):
+        request_detect = ""
+        if data == "RFU\n":
+            if self.User_Flag:
+                request_detect = "FURu\n"
+            if self.Danger_Flag:
+                request_detect = "FURd\n"
+            if self.Not_Detect_Flag:
+                request_detect = "FURn\n"
+            self.ser.write(request_detect.encode())
+            self.request_Flag = False
+        else:
+            print("To_APP")
+            client.publish('TO_APP', data.encode(), 0)
+
+    def uart_therad(self):
+        receive_data_full = ""
+        while self.ser.readable():
+            receive_data = self.ser.read()
+            if receive_data != b'':
+                print(receive_data)
+                try:
+                    receive_data_full += receive_data.decode()
+                except:
+                    receive_data_full = ""
+                    print("Uart Error")
+
+                if receive_data == b'\n':
+                    print(receive_data_full)
+                    self.check_uart_data(receive_data_full)
+                    if receive_data_full == "RFU\n":
+                        self.request_Flag = True
+                    receive_data_full = ""
+
+                    if receive_data_full == receive_data_full:
+                        self.recycle_uart = False
+                    elif receive_data_full != receive_data_full:
+                        self.recycle_uart = True
+                        break
+            else:
+                break
+
+    def work(self):
+        print("Timer on")
+        self.capture_Flag = False
+        self.recycle_uart = True
+        if self.Danger_Flag:
+            self.ser.write(b'DRP\n')
+            pass
+        self.User_Flag = False
+        self.Danger_Flag = False
+        self.Not_detect_Flag = True
+        self.time_request = self.time_request + 1
+        threading.Timer(10, self.work).start()
 
     def on_publish(self, client, userdata, mid):
         mola = 1
@@ -155,6 +269,22 @@ if __name__ == "__main__":
     client.connect(url, 1883)
     client.connect_async(url, 1883)
     client.loop_start()
+    face_recog.work()
+    # receive_data_full = ""
+    face_recog.ser.write(b'RIC\n')
 
 while True:
-    face_recog.capture()
+    try:
+        face_recog.capture()
+    except:
+        print("capture error")
+
+    try:
+        uart_th = threading.Thread(target=face_recog.uart_therad())
+        uart_th.start()
+    except:
+        print("uart error")
+
+    # face_recog.check_face()
+    if face_recog.request_Flag:
+        face_recog.check_uart_data("RFU\n")

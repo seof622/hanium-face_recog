@@ -342,9 +342,9 @@ if __name__ == '__main__':
 
 
 
-#          if face_recog.recycle_uart == True:
-#          while face_recog.ser.readable():
-         """try:
+          if face_recog.recycle_uart == True:
+          while face_recog.ser.readable():
+         try:
              receive_data = face_recog.ser.read()
          except:
              receive_data = 0;
@@ -355,12 +355,12 @@ if __name__ == '__main__':
              if receive_data_full == "RFU\n":
                  face_recog.request_Flag = True
              receive_data_full = ""
-        """""
-#             if receive_data_full == receive_data_full:
-#                 face_recog.recycle_uart = False
-#             elif receive_data_full != receive_data_full:
-#                 face_recog.recycle_uart = True
-#                 break
+
+             if receive_data_full == receive_data_full:
+                 face_recog.recycle_uart = False
+             elif receive_data_full != receive_data_full:
+                 face_recog.recycle_uart = True
+                 break
          face_recog.check_face()
          if face_recog.request_Flag:
              face_recog.check_uart_data("RFU\n")
